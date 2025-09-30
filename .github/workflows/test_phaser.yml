@@ -1,0 +1,80 @@
+# phaser and phasertng testing
+
+name: phaser and phasertng testing
+on:
+  workflow_dispatch:
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: cctbx/cctbx_project
+          path: ./modules/cctbx_project
+
+      - name: Link bootstrap.py
+        run: ln -s ./modules/cctbx_project/libtbx/auto_build/bootstrap.py
+
+      - name: Download sources
+        run: python bootstrap.py hot update --builder=voyager
+
+      - name: Create tarball
+        run: tar -cf modules.tar ./modules
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modules
+          path: ./modules.tar
+          overwrite: true
+
+  test_phaser_and_phasertng:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [linux-64, osx-arm64, osx-64, win-64]
+        os: [ubuntu-latest, macos-15, macos-13, windows-latest]
+        python_version: [3.9, "3.10", 3.11, 3.12, 3.13]
+        python_version2: [39, 310, 311, 312, 313]
+
+    name: Testing (${{ matrix.os }}, Python ${{ matrix.python_version }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          python-version: ${{ matrix.python_version }}
+
+      - name: Base environment info
+        run: |
+          conda info
+          conda list
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: modules
+
+      - name: Extract tarball
+        run: tar -xf modules.tar
+
+      - name: Create conda environment
+        run: conda create -p conda_base --file ./modules/cctbx_project/libtbx/auto_build/conda_envs/cctbx_py${{ matrix.python_version2 }}_${{ matrix.arch }}.txt
+
+      - name: Build
+        run: python bootstrap.py build --builder=voyager --nproc=4
+
+      - name: Test (linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          ./build/bin/libtbx.run_tests_parallel \
+            phaser_regression \
+            yager_regression \
+            nproc=4
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .\build\bin\libtbx.run_tests_parallel ^
+            phaser_regression ^
+            yager_regression ^
+            nproc=4
